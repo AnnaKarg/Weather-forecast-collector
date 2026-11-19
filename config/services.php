@@ -35,4 +35,13 @@ return [
         ],
     ],
 
+    'open_meteo' => [
+        'base_url' => env('OPEN_METEO_BASE_URL', 'https://api.open-meteo.com/v1'),
+    ],
+
+    'weather_api' => [
+        'base_url' => env('WEATHER_API_BASE_URL', 'https://api.weatherapi.com/v1'),
+        'key' => env('WEATHER_API_KEY'),
+    ],
+
 ];
