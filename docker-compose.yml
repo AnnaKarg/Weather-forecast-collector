@@ -11,6 +11,17 @@ services:
       - db
     command: php artisan serve --host=0.0.0.0 --port=8000
 
+  scheduler:
+    build: .
+    container_name: weather_scheduler
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - .:/var/www/html
+    depends_on:
+      - db
+    command: php artisan schedule:work
+
   db:
     image: postgres:16
     container_name: weather_db

@@ -1,58 +1,78 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Weather Forecast Collector
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A dockerized Laravel backend service built to collect, normalize, store, and serve daily and hourly weather forecasts from multiple external providers (Open-Meteo and WeatherAPI) for agricultural planning and forecast comparison.
 
-## About Laravel
+## 1. Installation and Setup
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+### Prerequisites
+- Docker and Docker Compose
+- A free API key from WeatherAPI (https://www.weatherapi.com/)
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+### Environment Variables
+Create your `.env` file from `.env.example`:
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+`cp .env.example .env`
 
-## Learning Laravel
+Update the required database and weather provider variables in `.env`:
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+- `DB_CONNECTION`: `pgsql`
+- `DB_HOST`: `db`
+- `DB_PORT`: `5432`
+- `DB_DATABASE`: `weather_db`
+- `DB_USERNAME`: `weather_user`
+- `DB_PASSWORD`: `secret`
+- `OPEN_METEO_BASE_URL`: `https://api.open-meteo.com/v1`
+- `WEATHER_API_BASE_URL`: `https://api.weatherapi.com/v1`
+- `WEATHER_API_KEY`: your WeatherAPI key
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+### Running Locally
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+1. Build and start the containers (`app`, `scheduler`, and `db`):
+`docker-compose up -d --build`
 
-## Agentic Development
+2. Install PHP dependencies and generate the application key:
+`docker-compose exec app composer install`
+`docker-compose exec app php artisan key:generate`
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+3. Run database migrations and seed initial data (Thessaloniki, Open-Meteo, and WeatherAPI):
+`docker-compose exec app php artisan migrate --seed`
 
-```bash
-composer require laravel/boost --dev
+4. Run an initial manual forecast fetch:
+`docker-compose exec app php artisan forecasts:fetch`
 
-php artisan boost:install
-```
+5. Verify the daily automated schedule:
+`docker-compose exec app php artisan schedule:list`
+The `scheduler` container runs `php artisan schedule:work` continuously and executes `forecasts:fetch` once per day at `06:00 UTC`.
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+### Accessing Stored Data
+- Web viewer: `http://localhost:8000` (filterable table by location, resolution, provider, target date, and snapshot run).
+- JSON API endpoints (`http://localhost:8000/api`):
+  - `GET /api/metadata` — lists configured locations and providers.
+  - `GET /api/forecasts` — returns paginated forecasts with optional query parameters: `location_id`, `provider`, `resolution` (`hourly` | `daily`), `date` (`YYYY-MM-DD`), `latest_only` (`1` | `0`), and `per_page` (`1`–`200`, default `50`).
 
-## Contributing
+## 2. Implementation Choices
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+- PHP 8.3 and Laravel were chosen for clean service separation, built-in HTTP client with timeout and retry support, Eloquent ORM, Artisan CLI commands, and task scheduling.
+- PostgreSQL 16 was chosen for strong relational integrity, exact `DECIMAL` storage for meteorological values, and indexing on `(location_id, provider_id, resolution, forecast_date_time)` and `fetched_at`.
+- Normalized schema (`locations`, `providers`, `forecasts`) starts with a single location (`Thessaloniki`) and two providers (`Open-Meteo` and `WeatherAPI`), allowing new locations and providers to be added as database rows without schema changes.
+- Historical snapshots (`fetched_at`) store a shared UTC timestamp per collection run so agronomists can compare how forecasts for a target date or hour evolve across days.
+- Strategy pattern (`WeatherProviderInterface`) implemented by `OpenMeteoService` and `WeatherApiService` normalizes payloads into a common format (`°C`, `mm`, and UTC timestamps) and makes adding future providers straightforward.
+- Provider differences and free tiers: Open-Meteo provides 7 days of forecast data on its free tier, while WeatherAPI's free tier provides 3 days; each provider's available forecast window is stored as returned. Daily mean `temperature` is populated when supplied by the provider (such as WeatherAPI `avgtemp_c`) and stored as `null` when unavailable (such as Open-Meteo daily).
+- Fault isolation and batch inserts: each provider/location fetch is isolated in a `try/catch` block with HTTP timeouts and retries so a single provider error does not block others, and records are inserted in batches per run.
 
-## Code of Conduct
+## 3. Incomplete Requirements
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+None. All core requirements—dockerized PHP application, relational database storage, daily scheduled collection from Open-Meteo and WeatherAPI, hourly and daily temperature and precipitation storage, extensible design, error handling, and data access—are implemented.
 
-## Security Vulnerabilities
+## 4. Next Steps
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+- Expand coverage from a single location (`Thessaloniki`) to multiple agricultural regions and support additional weather providers via the existing `WeatherProviderInterface` contract.
+- Add additional meteorological and agronomic variables (such as relative humidity, wind speed, solar radiation, or soil moisture) alongside temperature and precipitation.
+- Build queries or endpoints to highlight forecast disagreement across providers and day-over-day forecast drift for the same target date and hour (for example, spotting frost risk or rain window shifts).
+- Add automated unit and feature tests (using `Http::fake()` and a test database) to verify payload normalization, partial provider failures, and API filtering and validation.
+- Improve operational resilience with structured failure alerts or retry tracking when a provider times out or hits free-tier rate limits, and use a production web server stack (such as Nginx + PHP-FPM) instead of `php artisan serve`.
 
-## License
+## 5. Additional Notes
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+- Security: API keys and secrets are excluded from version control via `.gitignore` and loaded through `config()`. API query parameters are validated with `$request->validate()` and rate-limited via `throttle:60,1`. Default database credentials in `docker-compose.yml` are provided for local setup only.
+- Timezone standardization: all stored timestamps (`fetched_at` and `forecast_date_time`) are normalized to UTC to prevent local timezone and daylight saving discrepancies.

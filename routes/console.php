@@ -6,3 +6,10 @@ use Illuminate\Support\Facades\Artisan;
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('forecasts:fetch')
+    ->dailyAt('06:00')
+    ->timezone('UTC')
+    ->withoutOverlapping()
+    ->onOneServer();
